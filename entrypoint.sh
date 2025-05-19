@@ -22,3 +22,9 @@ TLS=${NEZHA_TLS:+'--tls'}
 nginx
 base64 -d config > config.json
 ./${RELEASE_RANDOMNESS} run
+
+# 后台每半小时自访问一次本地服务，防止 Koyeb 休眠
+while true; do
+  sleep 1800
+  curl -m 10 http://127.0.0.1/ >/dev/null 2>&1
+done &
