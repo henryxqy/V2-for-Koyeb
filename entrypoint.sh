@@ -1,44 +1,49 @@
 #!/usr/bin/env bash
 
-# 1. 强制所有操作在可写的 /tmp 下进行
+# 1. 确定当前脚本所在目录
+CURRENT_DIR=$(pwd)
 WORK_DIR="/tmp"
-# 确保临时目录存在
-mkdir -p /tmp/client_temp /tmp/proxy_temp
 
-# 2. 准备 V2-ray 配置
-# 注意：一定要用绝对路径引用原始 config 文件
-base64 -d /home/choreo/app/config > /tmp/config.json
+# 2. 解码并配置
+# 检查当前目录下是否有 config 文件
+if [ -f "$CURRENT_DIR/config" ]; then
+    base64 -d "$CURRENT_DIR/config" > /tmp/config.json
+else
+    echo "Error: config file not found in $CURRENT_DIR"
+    exit 1
+fi
 
-# 替换变量 (确保 UUID 等环境变量已在 Choreo 后台设置)
+# 3. 复制并修改 Nginx 配置
+# 检查当前目录下是否有 nginx.conf
+if [ -f "$CURRENT_DIR/nginx.conf" ]; then
+    cp "$CURRENT_DIR/nginx.conf" /tmp/nginx.conf
+else
+    echo "Error: nginx.conf not found in $CURRENT_DIR"
+    exit 1
+fi
+
+# 执行变量替换
 UUID=${UUID:-'de04add9-5c68-8bab-950c-08cd5320df18'}
 VMESS_WSPATH=${VMESS_WSPATH:-'/vmess'}
 VLESS_WSPATH=${VLESS_WSPATH:-'/vless'}
+
+sed -i "s#listen       80;#listen 8080;#g" /tmp/nginx.conf
+sed -i "s#VMESS_WSPATH#${VMESS_WSPATH}#g;s#VLESS_WSPATH#${VLESS_WSPATH}#g" /tmp/nginx.conf
 sed -i "s#UUID#$UUID#g;s#VMESS_WSPATH#${VMESS_WSPATH}#g;s#VLESS_WSPATH#${VLESS_WSPATH}#g" /tmp/config.json
 
-# 3. 准备 Nginx 配置 (这是解决 111 报错的关键)
-# 从代码目录复制原始 nginx.conf 到 /tmp
-cp /home/choreo/app/nginx.conf /tmp/nginx.conf
-
-# 强制 Nginx 放弃监听 80，改为监听 8080
-sed -i "s#listen       80;#listen 8080;#g" /tmp/nginx.conf
-sed -i "s#listen  \[::\]:80;#listen [::]:8080;#g" /tmp/nginx.conf
-sed -i "s#VMESS_WSPATH#${VMESS_WSPATH}#g;s#VLESS_WSPATH#${VLESS_WSPATH}#g" /tmp/nginx.conf
-
-# 4. 运行二进制文件
+# 4. 处理运行程序 v
 RELEASE_RANDOMNESS=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 6)
-cp /home/choreo/app/v "/tmp/${RELEASE_RANDOMNESS}"
-chmod +x "/tmp/${RELEASE_RANDOMNESS}"
+if [ -f "$CURRENT_DIR/v" ]; then
+    cp "$CURRENT_DIR/v" "/tmp/${RELEASE_RANDOMNESS}"
+    chmod +x "/tmp/${RELEASE_RANDOMNESS}"
+else
+    echo "Error: binary 'v' not found"
+    exit 1
+fi
 
-# 5. 启动 Nginx (必须使用 -c 指定 /tmp 下的那个新配置)
-# -g 指令强制覆盖 PID 位置和关闭用户切换
-nginx -c /tmp/nginx.conf -g "pid /tmp/nginx.pid; user root; daemon on;" 2>&1 | tee /tmp/nginx_start.log
+# 5. 启动服务
+mkdir -p /tmp/client_temp
+nginx -c /tmp/nginx.conf -g "pid /tmp/nginx.pid; daemon on;"
 
-# 6. 运行主程序
 cd /tmp
-./${RELEASE_RANDOMNESS} run -config /tmp/config.json &
-
-# 7. 保活并防止脚本退出
-while true; do
-  sleep 1800
-  curl -m 10 http://127.0.0.1:8080/ >/dev/null 2>&1
-done
+./${RELEASE_RANDOMNESS} run -config /tmp/config.json
