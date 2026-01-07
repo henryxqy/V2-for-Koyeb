@@ -1,25 +1,17 @@
-# 保持使用 Debian 基础镜像以确保二进制文件兼容性
-FROM nginx:1.27
+FROM nginx:latest
+EXPOSE 8080
+WORKDIR /app
+USER root
 
-# 1. 设置工作目录
-WORKDIR /home/choreo/app
-
-# 2. 安装必要工具 (去掉了容器不支持的 systemctl)
-RUN apt-get update && apt-get install -y wget unzip iproute2 curl bash && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# 3. 复制本地文件
-# 确保 nginx.conf 和 entrypoint.sh 在 GitHub 仓库根目录
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY entrypoint.sh ./
 
-# 4. 下载并配置核心文件 (在 Build 阶段完成，避免运行时 Read-only 错误)
-RUN wget -O temp.zip $(wget -qO- "https://api.github.com/repos/v2fly/v2ray-core/releases/latest" | grep -m1 -o "https.*linux-64.*zip") && \
-    unzip temp.zip v2ray geoip.dat geosite.dat && \
-    mv v2ray v && \
-    rm -f temp.zip && \
-    chmod -v 755 v entrypoint.sh && \
-    # 将原本在 entrypoint.sh 里的 base64 操作提前到这里生成初始 config
+RUN apt-get update && apt-get install -y wget unzip iproute2 systemctl curl &&\
+    wget -O temp.zip $(wget -qO- "https://api.github.com/repos/v2fly/v2ray-core/releases/latest" | grep -m1 -o "https.*linux-64.*zip") &&\
+    unzip temp.zip v2ray geoip.dat geosite.dat &&\
+    mv v2ray v &&\
+    rm -f temp.zip &&\
+    chmod -v 755 v entrypoint.sh &&\
     echo 'ewogICAgImxvZyI6ewogICAgICAgICJsb2dsZXZlbCI6Indhcm5pbmciLAogICAgICAgICJhY2Nl\
 c3MiOiIvZGV2L251bGwiLAogICAgICAgICJlcnJvciI6Ii9kZXYvbnVsbCIKICAgIH0sCiAgICAi\
 aW5ib3VuZHMiOlsKICAgICAgICB7CiAgICAgICAgICAgICJwb3J0IjoxMDAwMCwKICAgICAgICAg\
@@ -28,32 +20,21 @@ ICAgICAgICAgICAgInNldHRpbmdzIjp7CiAgICAgICAgICAgICAgICAiY2xpZW50cyI6WwogICAg\
 ICAgICAgICAgICAgICAgIHsKICAgICAgICAgICAgICAgICAgICAgICAgImlkIjoiVVVJRCIsCiAg\
 ICAgICAgICAgICAgICAgICAgICAgICJhbHRlcklkIjowCiAgICAgICAgICAgICAgICAgICAgfQog\
 ICAgICAgICAgICAgICAgXQogICAgICAgICAgICB9LAogICAgICAgICAgICAic3RyZWFtU2V0dGlu\
-Z3MiOnsKICAgICAgICAgIC2icGF0aCI6IlZNRVNTX1dTUEFUSCIKICAgICAgICAgICAgICAgIH0K\
-ICAgICAgICAgICAgfQogICAgICAgIH0sCiAgICAgICAgewogICAgICAgICAgICAicG9ydCI6MjAw\
-MDAsCiAgICAgICAgICAgICJwcm90b2NvbCI6InZsZXNzIiwKICAgICAgICAgICAgImxpc3RlbiI6\
-IjEyNy4wLjAuMSIsCiAgICAgICAgICAgICJzZXR0aW5ncyI6ewogICAgICAgICAgICAgICAgImNs\
-aWVudHMiOlsKICAgICAgICAgICAgICAgICAgICB7CiAgICAgICAgICAgICAgICAgICAgICAgICJp\
-ZCI6IlVVSUQiCiAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAgICAgICAgXSwKICAgICAg\
-ICAgICAgICAgICJkZWNyeXB0aW9uIjoibm9uZSIKICAgICAgICAgICAgfSwKICAgICAgICAgICAg\
-InNldHRpbmdzIjp7CiAgICAgICAgICAgICAgICAibmV0d29yayI6IndzIiwKICAgICAgICAgICAg\
-ICAgICJ3c1NldHRpbmdzIjp7CiAgICAgICAgICAgICAgICAgICAgInBhdGgiOiJWTEVTU19XU1BB\
-VEgiCiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgIH0KICAgICAgICB9CiAgICBdLAogICAg\
-Im91dGJvdW5kcyI6WwogICAgICAgIHsKICAgICAgICAgICAgInByb3RvY29sIjoiZnJlZWRvbSIs\
-CiAgICAgICAgICAgICJzZXR0aW5ncyI6ewoKICAgICAgICAgICAgfQogICAgICAgIH0KICAgIF0s\
-Ci2ic2VydmVycyI6WwogICAgICAgICAgICAiOC44LjguOCIsCiAgICAgICAgICAgICI4LjguNC40\
-IiwKICAgICAgICAgICAgImxvY2FsaG9zdCIKICAgICAgICBdCiAgICB9Cn0K' > config
-
-# 5. 配置非 root 用户及目录权限
-RUN addgroup --gid 10001 choreo && \
-    adduser --uid 10001 --gid 10001 --disabled-password --gecos "" choreo && \
-    # 必须给 Nginx 需要使用的所有系统目录赋权
-    chown -R 10001:10001 /home/choreo/app /var/cache/nginx /var/run /var/log/nginx /etc/nginx /tmp && \
-    chmod -R 755 /home/choreo/app
-
-# 6. 切换到 Choreo 要求的 UID
-USER 10001
-
-# 7. 暴露端口 (需在 Choreo 控制台对应设置)
-EXPOSE 8080
+Z3MiOnsKICAgICAgICAgICAgICAgICJuZXR3b3JrIjoid3MiLAogICAgICAgICAgICAgICAgIndz\
+U2V0dGluZ3MiOnsKICAgICAgICAgICAgICAgICAgICAicGF0aCI6IlZNRVNTX1dTUEFUSCIKICAg\
+ICAgICAgICAgICAgIH0KICAgICAgICAgICAgfQogICAgICAgIH0sCiAgICAgICAgewogICAgICAg\
+ICAgICAicG9ydCI6MjAwMDAsCiAgICAgICAgICAgICJwcm90b2NvbCI6InZsZXNzIiwKICAgICAg\
+ICAgICAgImxpc3RlbiI6IjEyNy4wLjAuMSIsCiAgICAgICAgICAgICJzZXR0aW5ncyI6ewogICAg\
+ICAgICAgICAgICAgImNsaWVudHMiOlsKICAgICAgICAgICAgICAgICAgICB7CiAgICAgICAgICAg\
+ICAgICAgICAgICAgICJpZCI6IlVVSUQiCiAgICAgICAgICAgICAgICAgICAgfQogICAgICAgICAg\
+ICAgICAgXSwKICAgICAgICAgICAgICAgICJkZWNyeXB0aW9uIjoibm9uZSIKICAgICAgICAgICAg\
+fSwKICAgICAgICAgICAgInN0cmVhbVNldHRpbmdzIjp7CiAgICAgICAgICAgICAgICAibmV0d29y\
+ayI6IndzIiwKICAgICAgICAgICAgICAgICJ3c1NldHRpbmdzIjp7CiAgICAgICAgICAgICAgICAg\
+ICAgInBhdGgiOiJWTEVTU19XU1BBVEgiCiAgICAgICAgICAgICAgICB9CiAgICAgICAgICAgIH0K\
+ICAgICAgICB9CiAgICBdLAogICAgIm91dGJvdW5kcyI6WwogICAgICAgIHsKICAgICAgICAgICAg\
+InByb3RvY29sIjoiZnJlZWRvbSIsCiAgICAgICAgICAgICJzZXR0aW5ncyI6ewoKICAgICAgICAg\
+ICAgfQogICAgICAgIH0KICAgIF0sCiAgICAiZG5zIjp7CiAgICAgICAgInNlcnZlcnMiOlsKICAg\
+ICAgICAgICAgIjguOC44LjgiLAogICAgICAgICAgICAiOC44LjQuNCIsCiAgICAgICAgICAgICJs\
+b2NhbGhvc3QiCiAgICAgICAgXQogICAgfQp9Cg==' > config
 
 ENTRYPOINT [ "./entrypoint.sh" ]
