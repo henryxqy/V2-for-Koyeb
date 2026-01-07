@@ -1,53 +1,43 @@
 #!/usr/bin/env bash
 
-# 1. 所有的临时操作和配置文件都转移到可写的 /tmp 目录
+# 1. 强制所有操作在可写的 /tmp 下进行
 WORK_DIR="/tmp"
-CONF_FILE="$WORK_DIR/config.json"
-NGINX_CONF="$WORK_DIR/nginx.conf"
+# 确保临时目录存在
+mkdir -p /tmp/client_temp /tmp/proxy_temp
 
-# 2. 处理 V2 配置
-base64 -d config > "$CONF_FILE"
+# 2. 准备 V2-ray 配置
+# 注意：一定要用绝对路径引用原始 config 文件
+base64 -d /home/choreo/app/config > /tmp/config.json
+
+# 替换变量 (确保 UUID 等环境变量已在 Choreo 后台设置)
 UUID=${UUID:-'de04add9-5c68-8bab-950c-08cd5320df18'}
 VMESS_WSPATH=${VMESS_WSPATH:-'/vmess'}
 VLESS_WSPATH=${VLESS_WSPATH:-'/vless'}
+sed -i "s#UUID#$UUID#g;s#VMESS_WSPATH#${VMESS_WSPATH}#g;s#VLESS_WSPATH#${VLESS_WSPATH}#g" /tmp/config.json
 
-# 在 /tmp 下进行 sed 修改，避免 Read-only 错误
-sed -i "s#UUID#$UUID#g;s#VMESS_WSPATH#${VMESS_WSPATH}#g;s#VLESS_WSPATH#${VLESS_WSPATH}#g" "$CONF_FILE"
+# 3. 准备 Nginx 配置 (这是解决 111 报错的关键)
+# 从代码目录复制原始 nginx.conf 到 /tmp
+cp /home/choreo/app/nginx.conf /tmp/nginx.conf
 
-# 3. 处理 Nginx 配置
-# 先把原始配置拷到 /tmp，再修改它
-cp /etc/nginx/nginx.conf "$NGINX_CONF"
-# 强制 Nginx 监听 8080 (Choreo 要求 >1024)
-sed -i "s#listen 80;#listen 8080;#g" "$NGINX_CONF"
-sed -i "s#VMESS_WSPATH#${VMESS_WSPATH}#g;s#VLESS_WSPATH#${VLESS_WSPATH}#g" "$NGINX_CONF"
-# 核心：修复 Nginx 尝试写入只读目录的错误
-sed -i "/http {/a \    client_body_temp_path /tmp/client_temp;\n    proxy_temp_path /tmp/proxy_temp;\n    fastcgi_temp_path /tmp/fastcgi_temp;\n    uwsgi_temp_path /tmp/uwsgi_temp;\n    scgi_temp_path /tmp/scgi_temp;" "$NGINX_CONF"
+# 强制 Nginx 放弃监听 80，改为监听 8080
+sed -i "s#listen       80;#listen 8080;#g" /tmp/nginx.conf
+sed -i "s#listen  \[::\]:80;#listen [::]:8080;#g" /tmp/nginx.conf
+sed -i "s#VMESS_WSPATH#${VMESS_WSPATH}#g;s#VLESS_WSPATH#${VLESS_WSPATH}#g" /tmp/nginx.conf
 
-# 4. 伪装执行文件并移动到 /tmp 运行 (解决 noexec 问题)
+# 4. 运行二进制文件
 RELEASE_RANDOMNESS=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 6)
-cp v "$WORK_DIR/${RELEASE_RANDOMNESS}"
-chmod +x "$WORK_DIR/${RELEASE_RANDOMNESS}"
+cp /home/choreo/app/v "/tmp/${RELEASE_RANDOMNESS}"
+chmod +x "/tmp/${RELEASE_RANDOMNESS}"
 
-# 5. 哪吒探针处理 (如果需要，脚本也必须下载到 /tmp)
-TLS=${NEZHA_TLS:+'--tls'}
-if [ -n "${NEZHA_SERVER}" ] && [ -n "${NEZHA_PORT}" ] && [ -n "${NEZHA_KEY}" ]; then
-    wget https://raw.githubusercontent.com/naiba/nezha/master/script/install.sh -O "$WORK_DIR/nezha.sh"
-    chmod +x "$WORK_DIR/nezha.sh"
-    # 注意：Choreo 下安装 agent 可能会因为权限受限失败，但此处保留逻辑
-    echo '0' | "$WORK_DIR/nezha.sh" install_agent ${NEZHA_SERVER} ${NEZHA_PORT} ${NEZHA_KEY} ${TLS}
-fi
+# 5. 启动 Nginx (必须使用 -c 指定 /tmp 下的那个新配置)
+# -g 指令强制覆盖 PID 位置和关闭用户切换
+nginx -c /tmp/nginx.conf -g "pid /tmp/nginx.pid; user root; daemon on;" 2>&1 | tee /tmp/nginx_start.log
 
-# 6. 运行 Nginx
-# 使用 -c 指定 /tmp 下的配置文件，-g 指定 PID 位置
-mkdir -p /tmp/client_temp
-nginx -c "$NGINX_CONF" -g "pid /tmp/nginx.pid; daemon on;"
+# 6. 运行主程序
+cd /tmp
+./${RELEASE_RANDOMNESS} run -config /tmp/config.json &
 
-# 7. 运行主程序
-echo "Starting application with name: ${RELEASE_RANDOMNESS}"
-cd "$WORK_DIR"
-./${RELEASE_RANDOMNESS} run -config "$CONF_FILE" &
-
-# 8. 自动访问 (端口改为 8080)
+# 7. 保活并防止脚本退出
 while true; do
   sleep 1800
   curl -m 10 http://127.0.0.1:8080/ >/dev/null 2>&1
